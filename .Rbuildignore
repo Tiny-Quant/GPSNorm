@@ -1,2 +1,14 @@
 ^LICENSE\.md$
 ^README\.Rmd$
+^GPSNorm-paper/
+^\.devcontainer$
+^\.devcontainer/
+^GPSNorm-paper$
+^GPSNorm-paper/
+^scripts$
+^scripts/
+^docker-compose\.yml$
+^dockerfile$
+^.*\.yml$
+^.*\.yaml$
+^.*\.qmd$

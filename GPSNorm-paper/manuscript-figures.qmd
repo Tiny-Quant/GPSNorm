@@ -1,0 +1,1269 @@
+---
+title: "Manuscript Figures"
+author: "Art Tay"
+format:
+  pdf:
+     documentclass: article
+     papersize: letter
+     geometry:
+         margin=1in
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+# knitr options.
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+# knitr::opts_knit$set(root.dir = )
+
+# Libraries.
+library(tidyverse)
+# library(tidymodels)
+library(kableExtra)
+
+# tidymodels_prefer()
+
+library(INLA)
+library(Matrix)
+
+library(SpaNorm)
+library(SpatialExperiment)
+
+# load sample data
+data(HumanDLPFC)
+# change gene IDs to gene names
+rownames(HumanDLPFC) = rowData(HumanDLPFC)$gene_name
+```
+
+```{r}
+#| label: Meta Data
+
+method_order <- c(
+  "GPSNorm", 
+  "none",
+  "q3",
+  "ls",
+  "scran",
+  "sct",
+  "Giotto",
+  "SpaNorm"
+)
+```
+
+```{r}
+#| label: Load GPSNorm
+
+devtools::load_all(".")
+library(GPSNorm)
+```
+
+This notebook documents the code used to generate each figure present in the manuscript. 
+
+# Figure 1 
+
+```{r}
+#| label: Figure 1 code
+
+set.seed(1)
+
+# ------------------------------------------------------------
+# 1. Build simple 1D chain adjacency (Besag graph)
+# ------------------------------------------------------------
+
+build_chain_graph <- function(n) {
+    i <- c(1:(n - 1), 2:n)
+    j <- c(2:n, 1:(n - 1))
+    A <- sparseMatrix(i = i, j = j, x = 1, dims = c(n, n))
+    A <- A + t(A)
+    A
+}
+
+# ------------------------------------------------------------
+# 2. Simulate spatial Poisson data
+#    Note: at spatial_sd = 0, u = 0 exactly (stable baseline).
+# ------------------------------------------------------------
+
+simulate_spatial_data <- function(n = 30,
+                                  beta = 0,
+                                  spatial_sd = 0.5,
+                                  alpha = 3) {
+
+    AOI_ID <- 1:n
+    x_coord <- seq(0, 1, length.out = n)
+
+    diff <- ifelse(x_coord > 0.5, 1, 0)
+
+    if (spatial_sd <= 0) {
+        u <- rep(0, n)
+    } else {
+        u <- cumsum(rnorm(n, mean = 0, sd = spatial_sd / sqrt(n)))
+        u <- as.numeric(scale(u)) * spatial_sd
+    }
+
+    eta <- alpha + beta * diff + u
+    mu <- exp(eta)
+
+    y <- rpois(n, mu)
+
+    list(
+        df = data.frame(
+            y = y,
+            AOI_ID = AOI_ID,
+            diff = diff
+        ),
+        graph = build_chain_graph(n)
+    )
+}
+
+# ------------------------------------------------------------
+# 3. Fit joint model
+# ------------------------------------------------------------
+
+fit_joint <- function(dat) {
+
+    formula <- y ~ 1 + diff +
+        f(
+            AOI_ID,
+            model = "besag",
+            graph = dat$graph,
+            scale.model = TRUE
+        )
+
+    inla(
+        formula,
+        data = dat$df,
+        family = "poisson",
+        control.predictor = list(compute = TRUE, link = 1),
+        control.compute = list(dic = FALSE, waic = FALSE, cpo = FALSE)
+    )
+}
+
+# ------------------------------------------------------------
+# 4. Plug-in normalization (two-stage)
+# ------------------------------------------------------------
+
+fit_plugin <- function(dat) {
+
+    formula_spatial <- y ~ 1 +
+        f(
+            AOI_ID,
+            model = "besag",
+            graph = dat$graph,
+            scale.model = TRUE
+        )
+
+    fit_spatial <- inla(
+        formula_spatial,
+        data = dat$df,
+        family = "poisson",
+        control.predictor = list(compute = TRUE, link = 1),
+        control.compute = list(dic = FALSE, waic = FALSE, cpo = FALSE)
+    )
+
+    u_hat <- fit_spatial$summary.random$AOI_ID$mean
+
+    df2 <- dat$df
+    df2$offset_corr <- -u_hat
+
+    formula_de <- y ~ 1 + diff + offset(offset_corr)
+
+    inla(
+        formula_de,
+        data = df2,
+        family = "poisson",
+        control.predictor = list(compute = TRUE, link = 1),
+        control.compute = list(dic = FALSE, waic = FALSE, cpo = FALSE)
+    )
+}
+
+# ------------------------------------------------------------
+# 5. Run simulation across spatial strengths (replicate-level)
+# ------------------------------------------------------------
+
+spatial_grid <- seq(0, 1.5, length.out = 8)
+n_rep <- 100
+
+message("Starting simulation: ",
+        "grid = ", length(spatial_grid),
+        ", reps per grid = ", n_rep,
+        ", total fits = ", length(spatial_grid) * n_rep * 2)
+
+all_res <- vector("list", length(spatial_grid) * n_rep)
+k <- 1L
+
+for (g in seq_along(spatial_grid)) {
+
+    s <- spatial_grid[g]
+    message(sprintf("Grid %d / %d: spatial_sd = %.3f",
+                    g, length(spatial_grid), s))
+
+    for (r in 1:n_rep) {
+
+        if (r %% 5 == 0 || r == 1) {
+            message(sprintf("  rep %d / %d", r, n_rep))
+        }
+
+        dat <- simulate_spatial_data(
+            beta = 0,
+            spatial_sd = s
+        )
+
+        fitJ <- fit_joint(dat)
+        fitP <- fit_plugin(dat)
+
+        betaJ <- fitJ$summary.fixed["diff", "mean"]
+        sdJ <- fitJ$summary.fixed["diff", "sd"]
+
+        betaP <- fitP$summary.fixed["diff", "mean"]
+        sdP <- fitP$summary.fixed["diff", "sd"]
+
+        widthJ <- 2 * 1.96 * sdJ
+        widthP <- 2 * 1.96 * sdP
+
+        coverJ <- abs(betaJ - 0) <= 1.96 * sdJ
+        coverP <- abs(betaP - 0) <= 1.96 * sdP
+
+        all_res[[k]] <- data.frame(
+            spatial_sd = s,
+            width_joint = widthJ,
+            width_plugin = widthP,
+            cover_joint = coverJ,
+            cover_plugin = coverP
+        )
+        k <- k + 1L
+    }
+}
+
+res <- bind_rows(all_res)
+
+# ------------------------------------------------------------
+# 6. Summaries + MC SEs for error bars
+# ------------------------------------------------------------
+
+sum_res <- res %>%
+    group_by(spatial_sd) %>%
+    summarise(
+        width_joint = mean(width_joint),
+        width_plugin = mean(width_plugin),
+        se_width_joint = sd(width_joint) / sqrt(n()),
+        se_width_plugin = sd(width_plugin) / sqrt(n()),
+        cover_joint = mean(cover_joint),
+        cover_plugin = mean(cover_plugin),
+        se_cover_joint =
+            sqrt(cover_joint * (1 - cover_joint) / n()),
+        se_cover_plugin =
+            sqrt(cover_plugin * (1 - cover_plugin) / n()),
+        .groups = "drop"
+    )
+
+# ------------------------------------------------------------
+# 7. Plot CI width with error bars (mean +/- 1 SE)
+# ------------------------------------------------------------
+
+width_long <- sum_res %>%
+    transmute(
+        spatial_sd = spatial_sd,
+        Joint = width_joint,
+        Plug_in = width_plugin,
+        se_Joint = se_width_joint,
+        se_Plug_in = se_width_plugin
+    ) %>%
+    pivot_longer(
+        cols = c(Joint, Plug_in),
+        names_to = "method",
+        values_to = "width"
+    ) %>%
+    mutate(
+        se = ifelse(method == "Joint", se_Joint, se_Plug_in),
+        ymin = width - se,
+        ymax = width + se
+    )
+
+p1 <- ggplot(width_long, aes(spatial_sd, width, color = method)) +
+    geom_line(linewidth = 1.2) +
+    geom_point(size = 2) +
+    geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 0.05) +
+    labs(
+        x = "Spatial SD",
+        y = "Average 95% CI width (beta)",
+        color = "",
+        title = "Joint Bayesian vs Plug-in DE Uncertainty"
+    ) +
+    theme_bw()
+
+print(p1)
+
+# ------------------------------------------------------------
+# 8. Plot coverage with error bars (mean +/- 1 SE)
+# ------------------------------------------------------------
+
+cover_long <- sum_res %>%
+    transmute(
+        spatial_sd = spatial_sd,
+        Joint = cover_joint,
+        Plug_in = cover_plugin,
+        se_Joint = se_cover_joint,
+        se_Plug_in = se_cover_plugin
+    ) %>%
+    pivot_longer(
+        cols = c(Joint, Plug_in),
+        names_to = "method",
+        values_to = "cover"
+    ) %>%
+    mutate(
+        se = ifelse(method == "Joint", se_Joint, se_Plug_in),
+        ymin = pmax(0, cover - se),
+        ymax = pmin(1, cover + se)
+    )
+
+p2 <- ggplot(cover_long, aes(spatial_sd, cover, color = method)) +
+    geom_line(linewidth = 1.2) +
+    geom_point(size = 2) +
+    geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 0.05) +
+    geom_hline(yintercept = 0.95, linetype = "dashed") +
+    labs(
+        x = "Spatial SD",
+        y = "Empirical 95% coverage",
+        color = "",
+        title = "Coverage of beta under Spatial Confounding"
+    ) +
+    theme_bw()
+
+print(p2)
+```
+
+# Figure 2 
+
+```{r}
+#| label: Figure 2 code 
+
+sim_1 <- GPSNorm::simulate_spe_benchmark(
+    HumanDLPFC, 
+    domain_col = "AnnotatedCluster",
+    de_prop = 0.1,
+    dom_prop = 0.20,
+    dom_sd = 1.5, 
+    svg_prop = 0.20,
+    svg_sd = 1.5, 
+    de_svg_overlap = 0.7, 
+    de_dom_overlap = 0.7, 
+    tech_spatial_sd = 1.6,
+    slide_lib_sd = 1.2,
+    zi_prob = 0,
+    spot_prop = 0.05,
+    gene_prop = 0.05,
+    seed = 1
+)
+
+sim_1_INLA <- GPSNorm::normalize_spe_inla_pac(
+    sim_1$spe, 
+    model_fun = GPSNorm::fit_inla_baseline_model,
+    model_args = list(
+        verbose = TRUE
+    )
+)
+
+# ------------------------------------------------------------
+# 1. Build spatial correction (within-slide centered)
+# ------------------------------------------------------------
+
+df_plot <- sim_1$truth_spot |> as.data.frame() |> 
+    mutate(est = unique(sim_1_INLA$fit$latent$spatial_eff)) |> 
+    group_by(Slide_ID) |>
+    mutate(
+        logL_ctr = log_L_all - mean(log_L_all),
+        est_ctr  = est - mean(est),
+        correction = logL_ctr + est_ctr
+    ) |>
+    ungroup()
+
+# Global correlation for annotation
+corr_val <- cor(df_plot$correction,
+                df_plot$tech_exposure_ctr)
+
+# Shared color limits (IMPORTANT for visual comparison)
+lims <- range(
+    c(df_plot$tech_exposure_ctr, df_plot$correction),
+    finite = TRUE
+)
+
+# ------------------------------------------------------------
+# 2. Panel A — True technical field
+# ------------------------------------------------------------
+
+true_field <- df_plot |> 
+    ggplot(aes(x = x, y = y, color = tech_exposure_ctr)) +
+        geom_point(size = 1.5) +
+        facet_wrap(~ Slide_ID) +
+        scale_color_viridis_c(limits = lims) +
+        coord_equal() +
+    labs(
+        title = "True Technical Spatial Field",
+        color = "Expression Level"
+    ) +
+    theme_bw() + 
+    theme(
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+    ) +
+    theme(panel.grid = element_blank())
+
+# ------------------------------------------------------------
+# 3. Panel B — Model correction
+# ------------------------------------------------------------
+
+est_field <- df_plot |> 
+    ggplot(aes(x = x, y = y, color = correction)) +
+        geom_point(size = 1.5) +
+        facet_wrap(~ Slide_ID) +
+        scale_color_viridis_c(limits = lims) +
+        coord_equal() +
+        labs(
+            title = "Estimated Spatial Correction",
+            color = "Expression Level"
+        ) +
+        theme_bw() + 
+        theme(
+            axis.title = element_blank(),
+            axis.text = element_blank()
+        ) +
+        theme(panel.grid = element_blank())
+```
+
+# Figures 3 - 5
+
+```{r}
+#| label: Plotting helper function 
+
+plot_metric_summary <- function(
+    res_raw,
+    metric,
+    higher_is_better = TRUE,
+    highlight_winner = TRUE,
+    title = NULL,
+    show_error = FALSE,
+    order = NULL
+) {
+
+    stopifnot(metric %in% colnames(res_raw))
+
+    # ----------------------------
+    # Aggregate over replicates
+    # ----------------------------
+    summary_tbl <- res_raw |>
+        dplyr::group_by(scenario, method) |>
+        dplyr::summarise(
+        mean = mean(.data[[metric]], na.rm = TRUE),
+        sd   = sd(.data[[metric]], na.rm = TRUE),
+        n    = sum(!is.na(.data[[metric]])),
+        .groups = "drop"
+        ) |>
+        dplyr::mutate(se = sd / sqrt(pmax(n, 1)))
+
+    # ----------------------------
+    # Identify winner per scenario
+    # ----------------------------
+    if (highlight_winner) {
+        summary_tbl <- summary_tbl |>
+        dplyr::group_by(scenario) |>
+        dplyr::mutate(
+            is_winner = if (higher_is_better) {
+            mean >= max(mean, na.rm = TRUE) - 1e-8
+            } else {
+            mean <= min(mean, na.rm = TRUE) + 1e-8
+            }
+        ) |>
+        dplyr::ungroup()
+    } else {
+        summary_tbl$is_winner <- FALSE
+    }
+
+    # ----------------------------
+    # Plot
+    # ----------------------------
+    p <- ggplot(
+        summary_tbl,
+        aes(
+        x = reorder(method, mean),
+        y = mean,
+        fill = is_winner
+        )
+    ) +
+        geom_col(
+            color = "black",
+            linewidth = 0.25
+        ) +
+        facet_wrap(~ scenario, scales = "free_y") +
+        scale_fill_manual(
+            values = c(
+                "TRUE"  = "#D55E00",  # colorblind-safe orange
+                "FALSE" = "grey70"
+            ),
+            guide = "none"
+        ) +
+        labs(
+            title = title %||% paste("Mean", metric, "by method"),
+            x = "Method",
+            y = paste("Mean", metric)
+        ) +
+        theme_bw(base_size = 11) +
+        theme(
+            strip.background = element_rect(fill = "grey90", color = NA),
+            panel.grid.major.y = element_blank()
+        )
+
+    # ----------------------------
+    # Optional error bars
+    # ----------------------------
+    if (show_error) {
+        p <- p +
+        geom_errorbar(
+            aes(ymin = mean - se, ymax = mean + se),
+            width = 0.3,
+            linewidth = 0.3
+        )
+    }
+
+    if (!is.null(order)) {
+        p <- p + scale_x_discrete(
+            limits = order, guide = guide_axis(n.dodge = 2)
+        )
+    }
+
+    return(p)
+}
+```
+
+
+```{r}
+#| label: Run and load simulation script results
+
+# Run `Rscript scripts/run_simulation.R`
+
+# Run `Rscript scripts/ren_de_eval.R` 
+
+de_results <- read.csv("./simulations_4/results/de_results.csv")
+```
+
+```{r}
+#| label: Figure 3 code
+
+de_bias_plot <- de_results 
+
+de_bias_plot <- de_bias_plot |> 
+    filter(!(engine == "limma" & method == "inla")) |> 
+    filter(method != "inla_mix") |> 
+    filter(method != "inla_mix") |> 
+    filter(method != "inla_heavy") |> 
+    filter(method != "inla_tuned") |> 
+    filter(method != "inla_bin") |> 
+    filter(scenario != "G_conf_strong") |> 
+    mutate(method = ifelse(method == "inla", "GPSNorm", method)) |> 
+    mutate(method = ifelse(method == "giotto", "Giotto", method)) |> 
+    mutate(method = ifelse(method == "spanorm", "SpaNorm", method)) |> 
+    group_by(scenario, method) |>
+    summarise(
+        RMSE = mean(sqrt(mse), na.rm = TRUE), 
+        bias = mean(bias, na.rm = TRUE),
+        .groups = "drop"
+    ) |>
+    mutate(method = factor(method, levels = method_order))
+
+de_bias_plot <- de_bias_plot |> 
+    ggplot(aes(
+        x = bias, y = RMSE, color = method
+    )) + 
+        geom_point(size = 3) + 
+        facet_wrap(~ scenario) + 
+        geom_vline(xintercept = 0, linetype = "dashed") + 
+        labs(
+            x = "Bias (mean logFC error)", 
+            y = "RMSE"
+        ) + 
+        theme_bw()
+
+de_bias_plot
+```
+
+
+```{r}
+#| label: Figure 4 code
+
+de_rmse_plot <- de_results
+
+de_rmse_plot <- de_rmse_plot |>  
+    filter(!(engine == "limma" & method == "inla")) |> 
+    filter(method != "inla_mix") |> 
+    filter(method != "inla_mix") |> 
+    filter(method != "inla_heavy") |> 
+    filter(method != "inla_tuned") |> 
+    filter(method != "inla_bin") |> 
+    filter(scenario != "G_conf_strong") |> 
+    mutate(method = ifelse(method == "inla", "GPSNorm", method)) |> 
+    mutate(method = ifelse(method == "giotto", "Giotto", method)) |> 
+    mutate(method = ifelse(method == "spanorm", "SpaNorm", method)) |> 
+    mutate(RMSE = sqrt(mse))
+
+de_rmse_plot <- plot_metric_summary(
+    de_rmse_plot, 
+    metric = "RMSE", 
+    higher_is_better = FALSE,
+    show_error = TRUE,
+    title = "",
+    order = method_order
+)
+
+de_rmse_plot
+```
+
+```{r}
+#| label: Figure 5 code
+
+de_auc_plot <- de_results
+
+de_auc_plot <- de_auc_plot |>  
+    filter(!(engine == "limma" & method == "inla")) |> 
+    filter(method != "inla_mix") |> 
+    filter(method != "inla_mix") |> 
+    filter(method != "inla_heavy") |> 
+    filter(method != "inla_tuned") |> 
+    filter(method != "inla_bin") |> 
+    filter(scenario != "G_conf_strong") |> 
+    mutate(method = ifelse(method == "inla", "GPSNorm", method)) |> 
+    mutate(method = ifelse(method == "giotto", "Giotto", method)) |> 
+    mutate(method = ifelse(method == "spanorm", "SpaNorm", method))
+
+de_auc_plot <- plot_metric_summary(
+    de_auc_plot, 
+    metric = "auc", 
+    higher_is_better = TRUE,
+    show_error = TRUE,
+    title = "",
+    order = method_order
+)
+
+de_auc_plot +
+    coord_cartesian(ylim = c(0.5, 1.0)) +
+    scale_y_continuous(
+        breaks = seq(0.5, 1.0, by = 0.15)
+    )
+```
+
+# Figure 6
+
+```{r}
+#| label: Figure 6 code
+
+# (C) Upper Left 
+
+logcounts(HumanDLPFC) = log2(counts(HumanDLPFC) + 1)
+
+p_counts = plotSpatial(
+    HumanDLPFC,
+    colour = MOBP,
+    what = "expression",
+    assay = "logcounts",
+    size = 1
+  ) +
+  scale_colour_viridis_c(option = "F") +
+  ggtitle("logCounts")
+
+p_counts
+
+# (C) Upper Right
+
+set.seed(36)
+spaNorm_spe <- SpaNorm(HumanDLPFC)
+
+p_logpac = plotSpatial(
+    spaNorm_spe, 
+    colour = MOBP,
+    what = "expression",
+    assay = "logcounts",
+    size = 1
+  ) +
+  scale_colour_viridis_c(option = "F") +
+  ggtitle("logPAC")
+
+p_logpac
+
+# Change domain to binary. 
+colData(HumanDLPFC)$WM <-
+  as.integer(colData(HumanDLPFC)$AnnotatedCluster == "WM")
+
+# Round trip format
+data_human <- GPSNorm::spe_to_geomx_long(
+    HumanDLPFC, 
+    assay = "counts", 
+    group_col = "WM"
+)
+
+data_human <- GPSNorm::geomx_long_to_spe(
+    data_human,
+    count_col = "Count_int",
+    aoi_col = "AOI_ID",
+    gene_col = "Gene_ID",
+    gene_name_col = "TargetName",
+    gene_type_col = "CodeClass_clean",
+    slide_col = "sample_id",
+    group_col = "WM",
+    coord_cols = c("ROICoordinateX", "ROICoordinateY")
+)
+
+# (C) Lower Left 
+
+set.seed(36)
+
+GPSNorm_spe <- GPSNorm::normalize_spe_inla_pac(
+    data_human, 
+    model_fun = GPSNorm::fit_inla_baseline_model,
+    model_args = list(
+        verbose = TRUE
+    ), 
+    cluster_aoi = TRUE, 
+    cluster_args = list(
+        k = 40, 
+        target_per_slide = 500L, 
+        verbose = TRUE
+    ), 
+    group_col = "WM_bin"
+)
+
+p_gps = plotSpatial(
+    GPSNorm_spe$spe, 
+    colour = MOBP,
+    what = "expression",
+    assay = "logcounts",
+    size = 1
+  ) +
+  scale_colour_viridis_c(option = "F") +
+  ggtitle("logPAC")
+
+p_gps
+
+# (C) Lower Right
+
+GPSNorm_spe_adj <- GPSNorm::adjust_counts(
+    GPSNorm_spe, 
+    method = "postmedian", 
+    assay_out = "adjusted"
+)
+
+p_gps_post_med = plotSpatial(
+    GPSNorm_spe_adj, 
+    colour = MOBP,
+    what = "expression",
+    assay = "adjusted",
+    size = 1
+  ) +
+  scale_colour_viridis_c(option = "F") +
+  ggtitle("logPAC")
+
+p_gps_post_med
+```
+
+# Figure 7
+
+```{r}
+#| label: Figure 7 code 
+
+# Load and format data. 
+data_covid <- GPSNorm::load_geomx_for_inla(
+    "/GPSNorm/analysis/data/crossSpatialTranscriptomicCharacterization_data/GSE186213_Post_Biological_Probe_QC.xlsx",
+    seg_covariates = c(
+        "AOISurfaceArea",
+        "AOINucleiCount",
+        "DeduplicatedReads",
+        "SequencingSaturation", 
+        "AlignedReads", 
+        "Mix"
+    )
+)
+
+data_covid_spe <- GPSNorm::geomx_long_to_spe(
+    data_covid, group_col = "Mix",
+    extra_coldata = c(
+        "AOISurfaceArea",
+        "AOINucleiCount",
+        "DeduplicatedReads",
+        "SequencingSaturation", 
+        "Slide_ID"
+    )
+)
+
+# GSPNorm Volcano
+covid_fit <- GPSNorm::normalize_spe_inla_pac(
+    data_covid_spe, 
+    model_fun = GPSNorm::fit_inla_baseline_model,
+    model_args = list(
+        verbose = TRUE
+    ), 
+    group_col = "Mix_bin"
+)
+
+covid_fit_bayes <- GPSNorm::de_volcano_bayes(
+    covid_fit$spe, 
+    covid_fit$fit$fit
+)
+
+# Competing Normalizations 
+
+covid_none <- data_covid_spe
+logcounts(covid_none) <- log2(counts(data_covid_spe) + 1)
+
+covid_q3 <- data_covid_spe
+logcounts(covid_q3) <- log2(counts(data_covid_spe) + 1)
+covid_q3 <- apply_q3_logcounts(covid_q3)
+
+#covid_SpaNorm <- SpaNorm::SpaNorm(data_covid_spe)
+
+#covid_scran <- normalise_scran(data_covid_spe)
+
+covid_sct <- normalise_sct(data_covid_spe)
+
+covid_Giotto <- normalise_Giotto(data_covid_spe)
+
+covid_ls <- normalise_ls(data_covid_spe)
+
+covid_none_limma <- GPSNorm::de_volcano_limma(
+    covid_none, 
+    group_col = "Mix_bin"
+)
+
+covid_q3_limma <- GPSNorm::de_volcano_limma(
+    covid_q3, 
+    group_col = "Mix_bin"
+)
+
+# covid_SpaNorm_limma <- GPSNorm::de_volcano_limma(
+#     covid_SpaNorm,
+#     group_col = "Mix_bin"
+# )
+
+# covid_scran_limma <- GPSNorm::de_volcano_limma(
+#     covid_scran,
+#     group_col = "Mix_bin"
+# )
+
+covid_sct_limma <- GPSNorm::de_volcano_limma(
+    covid_sct,
+    group_col = "Mix_bin"
+)
+
+covid_Giotto_limma <- GPSNorm::de_volcano_limma(
+    covid_Giotto,
+    group_col = "Mix_bin"
+)
+
+covid_ls_limma <- GPSNorm::de_volcano_limma(
+    covid_ls,
+    group_col = "Mix_bin"
+)
+```
+
+# Figure 8
+
+```{r}
+#| label: Figure 8 code 
+
+# Load and format data. 
+data_kidney <- GPSNorm::load_geomx_for_inla(
+    "/GPSNorm/analysis/data/atlas_human_kidney_data/hu_kidney_count_results/Export3_BiologicalProbeQC.xlsx", 
+    seg_covariates = c(
+        "AOISurfaceArea",
+        "AOINucleiCount",
+        "DeduplicatedReads",
+        "SequencingSaturation", 
+        "AlignedReads", 
+        "CD10+",
+        "Type"
+    )
+) |> filter(!is.na(Count))
+
+data_kidney <- data_kidney |> 
+    mutate(
+        group = ifelse(
+            Type %in% c("Cortical glomerulus","Juxtamedullary glomerulus"),
+            1, 0
+        ) 
+    )
+
+data_kidney_spe <- GPSNorm::geomx_long_to_spe(
+    data_kidney, group_col = "group",
+    extra_coldata = c(
+        "AOISurfaceArea",
+        "AOINucleiCount",
+        "DeduplicatedReads",
+        "SequencingSaturation"
+    )
+)
+
+# Define marker sets. 
+glomerulus_markers <- c(
+    "NPHS1", "NPHS2", "WT1", "PODXL",
+    "PTPRO", "SYNPO", "TRPC6",
+    "COL4A3", "COL4A4", "COL4A5",
+    "LAMB2"
+)
+
+pct_markers <- c(
+    "SLC34A1", "LRP2", "CUBN",
+    "SLC5A2", "AQP1",
+    "SLC22A6", "SLC22A8",
+    "ALDOB"
+)
+
+kidney_fit <- GPSNorm::normalize_spe_inla_pac(
+    data_kidney_spe, 
+    model_fun = GPSNorm::fit_inla_baseline_model,
+    model_args = list(
+        verbose = TRUE
+    ),
+    group_col = "group_bin"
+)
+
+kidney_fit_bayes_score <- (
+    kidney_fit_bayes$df |> arrange(gene) |> pull(beta)
+)
+
+kidney_none <- data_kidney_spe
+logcounts(kidney_none) <- log2(counts(data_kidney_spe) + 1)
+
+kidney_q3 <- data_kidney_spe
+logcounts(kidney_q3) <- log2(counts(data_kidney_spe) + 1)
+kidney_q3 <- apply_q3_logcounts(kidney_q3)
+
+kidney_SpaNorm <- SpaNorm::SpaNorm(data_kidney_spe, sample.p = 1)
+
+kidney_scran <- normalise_scran(data_kidney_spe)
+
+kidney_sct <- normalise_sct(data_kidney_spe)
+
+kidney_Giotto <- normalise_Giotto(data_kidney_spe)
+
+kidney_ls <- normalise_ls(data_kidney_spe)
+
+kidney_none_limma <- GPSNorm::de_volcano_limma(
+    kidney_none, 
+    group_col = "group_bin"
+)
+
+kidney_q3_limma <- GPSNorm::de_volcano_limma(
+    kidney_q3, 
+    group_col = "group_bin"
+)
+
+kidney_SpaNorm_limma <- GPSNorm::de_volcano_limma(
+    kidney_SpaNorm,
+    group_col = "group_bin"
+)
+
+kidney_scran_limma <- GPSNorm::de_volcano_limma(
+    kidney_scran,
+    group_col = "group_bin"
+)
+
+kidney_sct_limma <- GPSNorm::de_volcano_limma(
+    kidney_sct,
+    group_col = "group_bin"
+)
+
+kidney_Giotto_limma <- GPSNorm::de_volcano_limma(
+    kidney_Giotto,
+    group_col = "group_bin"
+)
+
+kidney_ls_limma <- GPSNorm::de_volcano_limma(
+    kidney_ls,
+    group_col = "group_bin"
+)
+
+res_list <- list(
+    GPSNorm  = kidney_fit_bayes$df,
+    none  = kidney_none_limma$all,
+    q3  = kidney_q3_limma$all,
+    SpaNorm  = kidney_SpaNorm_limma$all,
+    scran  = kidney_scran_limma$all,
+    sct  = kidney_sct_limma$all, 
+    Giotto  = kidney_Giotto_limma$all,
+    ls  = kidney_ls_limma$all
+)
+
+perf_table <- do.call(
+    rbind,
+    lapply(names(res_list), function(m) {
+        compute_dual_marker_performance(
+            res_list[[m]],
+            positive_markers = glomerulus_markers,
+            negative_markers = pct_markers,
+            method_name = m
+        )
+    })
+)
+
+evidence_df <- perf_table |>
+    select(method,
+            pos_mean_evidence_pct,
+            neg_mean_evidence_pct
+    ) |>
+    pivot_longer(
+        cols = -method,
+        names_to = "marker_type",
+        values_to = "value"
+    ) |>
+    mutate(
+        marker_type = recode(
+            marker_type,
+            pos_mean_evidence_pct = "Glomerulus",
+            neg_mean_evidence_pct = "Tubule"
+        )
+    )
+
+pA <- ggplot(evidence_df,
+             aes(x = method,
+                 y = value,
+                 fill = marker_type)) +
+    geom_col(position = position_dodge(width = 0.7),
+            width = 0.6) +
+    scale_fill_manual(
+        values = c(
+        "Glomerulus" = "#009E73",
+        "Tubule" = "#D55E00"
+        )
+    ) +
+    scale_y_continuous(limits = c(0, 1)) +
+    labs(
+        title = "Marker Evidence Ranking",
+        y = "Mean Evidence Percentile",
+        x = NULL,
+        fill = NULL
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+        plot.title = element_text(face = "bold"),
+        axis.text.x = element_text(angle = 30, hjust = 1)
+    )
+
+pA
+```
+
+# Table 2 
+
+Run `Rscript scripts/aoi_cluster_table.R`. 
+
+```{r}
+#| label: Table 2 code 
+
+sim_aoi_cluster_table <- read.csv(
+    "./simulations_4/results/aoi_cluster_results_top.csv",
+    header = TRUE
+)
+
+sim_aoi_cluster_table <- sim_aoi_cluster_table |> 
+    group_by(Resolution) |> 
+    summarise(
+        "AOIs" = mean(AOIs), 
+        "Runtime (sec)" = mean(Runtime),
+        "RMSE" = mean(RMSE_abs),
+        "Spearman" = mean(Spearman),
+        "Top 10% Spearman" = mean(TopK_Spearman)
+    ) |> arrange(desc(AOIs))
+
+sim_aoi_cluster_table |> select(-Resolution) |> 
+    kbl(format = "latex", booktabs = T,
+        longtable = T, linesep = "", digits = 4)
+```
+
+# Table 3 
+
+```{r}
+#| label: Table 3 code 
+
+kidney_fit_half <- GPSNorm::normalize_spe_inla_pac(
+    data_kidney_spe, 
+    model_fun = GPSNorm::fit_inla_baseline_model,
+    model_args = list(
+        verbose = TRUE
+    ),
+    group_col = "group_bin", 
+    cluster_aoi = TRUE, 
+    cluster_args = list(
+        k = 10, 
+        target_per_slide = 100L, 
+        verbose = TRUE
+    )
+)
+
+kidney_fit_quart_test <- GPSNorm::normalize_spe_inla_pac(
+    data_kidney_spe, 
+    model_fun = GPSNorm::fit_inla_baseline_model,
+    model_args = list(
+        verbose = TRUE
+    ),
+    group_col = "group_bin", 
+    cluster_aoi = TRUE, 
+    cluster_args = list(
+        k = 10, 
+        target_per_slide = 50L, 
+        verbose = TRUE
+    ) 
+)
+
+kidney_fit_half_res <- GPSNorm::de_volcano_bayes(
+    kidney_fit_half$spe, 
+    kidney_fit_half$fit$fit
+)
+
+kidney_fit_quart_res <- GPSNorm::de_volcano_bayes(
+    kidney_fit_quart_test$spe, 
+    kidney_fit_quart_test$fit$fit
+)
+
+
+kidney_fit_full_res <- kidney_fit_bayes
+kidney_fit_full_res$df <- kidney_fit_full_res$df |> arrange(gene)
+
+kidney_fit_half_res$df <- kidney_fit_half_res$df |> arrange(gene)
+
+kidney_fit_quart_res$df <- kidney_fit_quart_res$df |> arrange(gene)
+
+kidney_half_bayes_rmse <- (
+    sqrt(mean(
+        kidney_fit_full_res$df$beta - 
+        kidney_fit_half_res$df$beta
+    )^2)
+)
+
+kidney_half_bayes_spearman <- (
+    cor(
+        kidney_fit_full_res$df$beta, 
+        kidney_fit_half_res$df$beta, 
+        method = "spearman"
+    )
+)
+
+kidney_quart_bayes_rmse <- (
+    sqrt(mean(
+        kidney_fit_full_res$df$beta - 
+        kidney_fit_quart_res$df$beta
+    )^2)
+)
+
+kidney_quart_bayes_spearman <- (
+    cor(
+        kidney_fit_full_res$df$beta, 
+        kidney_fit_quart_res$df$beta, 
+        method = "spearman"
+    )
+)
+
+
+top_k <- ceiling(0.1 * 203)
+
+abs_ranked_genes <- kidney_fit_bayes$df |> 
+    arrange(desc(abs(beta))) |> 
+    pull(gene)
+
+top_k_genes <- abs_ranked_genes[1:top_k]
+
+kidney_half_top_k_spearman <- cor(
+    kidney_fit_full_res$df |> 
+        filter(gene %in% top_k_genes) |> 
+        arrange(gene) |>
+        pull(beta), 
+    kidney_fit_half_res$df |> 
+        filter(gene %in% top_k_genes) |> 
+        arrange(gene) |>
+        pull(beta), 
+    method = "spearman"
+)
+
+kidney_quart_top_k_spearman <- cor(
+    kidney_fit_full_res$df |> 
+        filter(gene %in% top_k_genes) |> 
+        arrange(gene) |>
+        pull(beta), 
+    kidney_fit_quart_res$df |> 
+        filter(gene %in% top_k_genes) |> 
+        arrange(gene) |>
+        pull(beta), 
+    method = "spearman"
+)
+
+top_prop <- 0.1
+top_k <- ceiling(top_prop * nrow(kidney_fit_full_res$df))
+
+top_k_genes <- kidney_fit_full_res$df |>
+    mutate(beta_abs = abs(beta)) |>
+    arrange(desc(beta_abs)) |>
+    slice_head(n = top_k) |>
+    pull(gene)
+
+topk_spearman <- function(
+    df_ref, df_cmp, top_genes, gene_col = "gene", beta_col = "beta"
+) {
+    ref <- df_ref |>
+        select(gene = all_of(gene_col), beta_ref = all_of(beta_col)) |>
+        distinct(gene, .keep_all = TRUE)
+
+    cmp <- df_cmp |>
+        select(gene = all_of(gene_col), beta_cmp = all_of(beta_col)) |>
+        distinct(gene, .keep_all = TRUE)
+
+    joined <- inner_join(ref, cmp, by = "gene") |>
+        filter(gene %in% top_genes)
+
+    k_target <- length(top_genes)
+    k_used   <- nrow(joined)
+    pct_missing <- 100 * (1 - k_used / k_target)
+
+    list(
+        spearman = cor(joined$beta_ref, joined$beta_cmp, method = "spearman"),
+        k_target = k_target,
+        k_used = k_used,
+        pct_missing = pct_missing,
+        joined = joined
+    )
+}
+
+half_res <- topk_spearman(
+    kidney_fit_full_res$df, kidney_fit_half_res$df, top_k_genes
+)
+
+quart_res <- topk_spearman(
+    kidney_fit_full_res$df, kidney_fit_quart_res$df, top_k_genes
+)
+
+kidney_half_top_k_spearman  <- half_res$spearman
+kidney_quart_top_k_spearman <- quart_res$spearman
+
+
+kidney_aoi <- data.frame(
+    AOIs = c(
+        nrow(kidney_fit$prep_full$aoi), 
+        nrow(kidney_fit_half$prep_fit$aoi), 
+        nrow(kidney_fit_quart_test$prep_fit$aoi)
+    ), 
+    Runtime_sec = c(
+        as.numeric(kidney_fit$fit$fit$cpu.used["Total"]), 
+        as.numeric(kidney_fit_half$fit$fit$cpu.used["Total"]), 
+        as.numeric(kidney_fit_quart_test$fit$fit$cpu.used["Total"])
+    ),
+    spearman_to_full_bayes = c(
+        NA, kidney_half_bayes_spearman, kidney_quart_bayes_spearman
+    ), 
+    RMSE_to_full_bayes = c(
+        NA, kidney_half_bayes_rmse, kidney_quart_bayes_rmse
+    ), 
+    top_k_spearman = c(
+        NA, kidney_half_top_k_spearman, kidney_quart_top_k_spearman 
+    ), 
+    spearman_to_full_limma = c(
+        NA, kidney_half_limma_spearman, kidney_quart_limma_spearman
+    ), 
+    RMSE_to_full_limma = c(
+        NA, kidney_half_limma_rmse, kidney_quart_limma_rmse
+    )
+)
+```
