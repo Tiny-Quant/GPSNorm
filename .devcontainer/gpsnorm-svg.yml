@@ -1,0 +1,27 @@
+name: gpsnorm-svg
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  # ---- Core ----
+  - r-base=4.3
+  - r-devtools
+  - r-dplyr
+  - r-tibble
+  - r-matrix
+  - r-reticulate
+  - r-pROC
+  - r-prroc
+  - r-readxl
+
+  # ---- Bioconductor ----
+  - bioconductor-singlecellexperiment
+  - bioconductor-spatialexperiment
+  - bioconductor-nnSVG
+  # - bioconductor-scran
+  # - bioconductor-scater
+  # - bioconductor-zellkonverter
+
+  # # ---- SVG-specific ----
+  # - r-seurat
+  # - r-seuratobject

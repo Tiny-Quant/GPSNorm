@@ -1,0 +1,67 @@
+# Base Image  
+FROM ubuntu:24.04
+
+# Linux environment variables. 
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
+
+# Install linux tools. 
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        build-essential git curl vim dpkg dos2unix \
+        graphviz \
+        bzip2 ca-certificates unzip fontconfig locales && \
+    locale-gen en_US.UTF-8 && \
+    update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 && \ 
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* 
+
+# Install Oh My Posh. 
+RUN curl -s https://ohmyposh.dev/install.sh | bash -s && \
+    echo 'eval "$(oh-my-posh init bash --config 'https://github.com/JanDeDobbeleer/oh-my-posh/blob/main/themes/atomic.omp.json')"' >> ~/.bashrc && \
+    echo 'alias ll="ls -lah"' >> ~/.bashrc
+ENV PATH=$PATH:/root/.local/bin
+
+# Install quarto. 
+ARG QUARTO_VER=1.6.41
+RUN curl -LO https://github.com/quarto-dev/quarto-cli/releases/download/v${QUARTO_VER}/quarto-${QUARTO_VER}-linux-amd64.deb && \
+    dpkg -i quarto-${QUARTO_VER}-linux-amd64.deb && \
+    rm quarto-${QUARTO_VER}-linux-amd64.deb && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN quarto install tinytex
+
+# Install micromamba. 
+ENV MAMBA_ROOT_PREFIX=/opt/micromamba
+ENV PATH=$MAMBA_ROOT_PREFIX/bin:$PATH
+RUN curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest \
+  | tar -xvj -C /usr/local/bin --strip-components=1 bin/micromamba
+
+# Build micromamba env from yaml. 
+COPY micromamba_env.yml /tmp/micromamba_env.yml
+RUN --mount=type=cache,target=${MAMBA_ROOT_PREFIX}/pkgs,sharing=locked,id=conda_cache \
+    micromamba install -n base -y -f /tmp/micromamba_env.yml && \
+    echo 'eval "$(micromamba shell hook --shell=bash)"' >> ~/.bashrc && \
+    echo 'micromamba activate base' >> ~/.bashrc
+
+# Install INLA. 
+RUN micromamba run Rscript -e 'install.packages("INLA", repos = c("https://cloud.r-project.org",INLA = "https://inla.r-inla-download.org/R/stable"),dependencies = TRUE)'
+
+# Install Giotto.
+# RUN micromamba run Rscript -e 'remotes::install_github("RubD/Giotto@cless")'
+
+# Set Git user configuration.
+RUN git config --global user.name "container" && \
+    git config --global user.email "container@docker.com"
+
+# Resolves tidymodels incorrect time zone warning
+RUN mkdir -p /var/db/timezone
+RUN ln -sf /usr/share/zoneinfo/Etc/UTC /var/db/timezone/localtime
+
+# Set working directory name. 
+WORKDIR /GPSNorm
+
+# Copy current directory. 
+COPY . /GPSNorm/

@@ -1,0 +1,32 @@
+name: gpsnorm-ari
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  # ---- base R ----
+  - r-base=4.3
+  - r-devtools
+  - r-dplyr
+  - r-tibble
+  - r-matrix
+  - r-igraph
+  - r-mclust
+  - r-reticulate
+  - r-readxl
+
+  # ---- Bioconductor ----
+  - bioconductor-singlecellexperiment
+  - bioconductor-spatialexperiment
+  - bioconductor-scran
+  - bioconductor-scater
+  # - bioconductor-bayesspace
+  # - bioconductor-zellkonverter
+
+  # # ---- Python (SpaGCN) ----
+  # - python=3.10
+  # - numpy
+  # - pandas
+  # - pytorch
+  # - pip
+  # - pip:
+  #     - SpaGCN

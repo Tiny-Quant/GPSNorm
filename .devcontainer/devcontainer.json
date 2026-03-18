@@ -1,0 +1,40 @@
+{
+    "name": "${localWorkspaceFolderBasename}",
+    "dockerComposeFile": "docker-compose.yml", 
+    "service": "devcontainer",
+    "workspaceFolder": "/GPSNorm", 
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "quarto.quarto", 
+                "reditorsupport.r", 
+                "ms-python.python", 
+                "ms-python.vscode-pylance", 
+                "ms-toolsai.jupyter", 
+                "christian-kohler.path-intellisense", 
+                "streetsidesoftware.code-spell-checker", 
+                "pascalsenn.keyboard-quickfix"
+            ], 
+            "settings": {
+                "quarto.path": "/opt/bin/quarto",
+                "quarto.render.renderOnSave": true,
+                "[quarto]": {
+                    "editor.snippetSuggestions": "top", // for snippets
+                    "editor.quickSuggestionsDelay": 10
+                }, 
+                "r.alwaysUseActiveTerminal": true,  // don't open new
+                "r.bracketedPaste": true, // needed for radian 
+                "r.liveShare.defaults.shareWorkspace": false, // disabled for now 
+                "r.plot.useHttpgd": true, // for in editor plots
+                "r.rmarkdown.knit.openOutputFile": true,
+                "r.rpath.linux": "/opt/micromamba/bin/R",
+                "r.rterm.linux": "/opt/micromamba/bin/radian", 
+                "python.terminal.launchArgs": [
+                    "-m",
+                    "IPython",
+                    "--no-autoindent"
+                ]
+            }
+        }
+    }
+}

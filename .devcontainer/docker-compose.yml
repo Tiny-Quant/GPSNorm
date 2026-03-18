@@ -1,0 +1,15 @@
+services:
+
+  devcontainer: 
+    build: 
+      # Only includes current directory in build context. Keep as small possible. 
+      # Use .dockerignore if big files in to be kept in .devcontainer/. 
+      context: .  
+      dockerfile: dockerfile
+
+    volumes:
+      # Mount the local repo folder to a repo folder in the container. 
+      - ../:/GPSNorm
+
+    stdin_open: true # Keep the standard input available even if the terminal is closed.  
+    tty: true # Better interactive terminal sessions. 
