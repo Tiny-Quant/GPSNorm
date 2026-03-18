@@ -6,10 +6,36 @@ Authors@R:
            comment = c(ORCID = "YOUR-ORCID-ID"))
 Description: What the package does (one paragraph).
 License: MIT + file LICENSE
-Encoding: UTF-8
-Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.2.3
+Imports: 
+    dplyr,
+    FNN,
+    ggplot2,
+    ggrepel,
+    Giotto,
+    INLA,
+    limma,
+    Matrix,
+    methods,
+    pROC,
+    PRROC,
+    RcppZiggurat,
+    readxl,
+    S4Vectors,
+    scater,
+    scran,
+    sctransform,
+    SingleCellExperiment,
+    SpatialExperiment,
+    stats,
+    SummarizedExperiment,
+    tibble,
+    tidyr,
+    tripack
 Suggests: 
     knitr,
     rmarkdown
-VignetteBuilder: knitr
+VignetteBuilder: 
+    knitr
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3

@@ -1,30 +1,21 @@
----
-output: github_document
----
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
-
-```{r, include = FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  fig.path = "man/figures/README-",
-  out.width = "100%"
-)
-```
 
 # GPSNorm
 
 ## Installation
 
-⚠️ **Recommended: use the provided Devcontainer / Docker environment.**  
-GPSNorm depends on **INLA**, which uses platform-specific compiled binaries.  
-Different binary builds can lead not only to installation problems, but also to
-unexpected model behavior or numerical differences across systems.  
-For this reason, the container environment is the recommended way to run GPSNorm
-and to reproduce results.
+⚠️ **Recommended: use the provided Devcontainer / Docker
+environment.**  
+GPSNorm depends on **INLA**, which uses platform-specific compiled
+binaries.  
+Different binary builds can lead not only to installation problems, but
+also to unexpected model behavior or numerical differences across
+systems.  
+For this reason, the container environment is the recommended way to run
+GPSNorm and to reproduce results.
 
----
+------------------------------------------------------------------------
 
 ### Option 1 — VSCode Devcontainer (recommended)
 
@@ -45,11 +36,11 @@ Requirements:
 
 - Docker  
 - VSCode  
-- Dev Containers extension  
+- Dev Containers extension
 
 This setup ensures a consistent R / INLA environment.
 
----
+------------------------------------------------------------------------
 
 ### Option 2 — docker-compose
 
@@ -61,7 +52,7 @@ Start the same environment manually:
 
 This launches the container used by the devcontainer configuration.
 
----
+------------------------------------------------------------------------
 
 ### Option 3 — Install from GitHub (advanced users)
 
@@ -72,13 +63,13 @@ reproducibility is important.
     install.packages("remotes")
     remotes::install_github("tiny-quant/GPSNorm", dependencies = TRUE)
 
----
+------------------------------------------------------------------------
 
 ## Example
 
 This is a basic example which shows you how to solve a common problem:
 
-```{r example}
+``` r
 # devtools::load_all(".") # uncomment if opened in container.
 library(GPSNorm)
 
@@ -110,6 +101,7 @@ data_covid_spe <- GPSNorm::geomx_long_to_spe(
         "Slide_ID"
     )
 )
+#> Group encoding: 'False' -> 0 ; 'True' -> 1
 
 # Run normalization. 
 set.seed(1)
@@ -122,9 +114,10 @@ covid_fit <- GPSNorm::normalize_spe_inla_pac(
     ), 
     group_col = "Mix_bin"
 )
+#> [1] "Building knn adjacency..."
 ```
 
-```{r}
+``` r
 # DE volcano plot.
 covid_fit_bayes <- GPSNorm::de_volcano_bayes(
     covid_fit$spe, 
@@ -134,7 +127,9 @@ covid_fit_bayes <- GPSNorm::de_volcano_bayes(
 covid_fit_bayes$plot 
 ```
 
-```{r}
+<img src="man/figures/README-unnamed-chunk-2-1.png" width="100%" />
+
+``` r
 # DE posterior for a specific gene (SCGB1A1). 
 
 de_posterior <- plot_de_posterior(
@@ -143,5 +138,13 @@ de_posterior <- plot_de_posterior(
     gene_name_col = "Gene_ID"
 )
 
-de_posterior$plot
+de_posterior
+#> $plot
 ```
+
+<img src="man/figures/README-unnamed-chunk-3-1.png" width="100%" />
+
+    #> 
+    #> $summary
+    #>   gene scale       mean      q_low      q_med     q_high p_gt0 p_lt0 rope_prob
+    #> 1 1524 logFC -0.5241118 -0.6880245 -0.5162815 -0.3826269     0     1        NA

@@ -12,3 +12,6 @@
 ^.*\.yml$
 ^.*\.yaml$
 ^.*\.qmd$
+^doc$
+^Meta$
+^dev$

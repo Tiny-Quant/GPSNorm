@@ -9,11 +9,92 @@ vignette: >
 
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>"
+    collapse = TRUE,
+    comment = "#>"
 )
 ```
 
-```{r setup}
+```{r}
 library(GPSNorm)
+```
+
+Because of the sensitivity of INLA binary we can only guarantee exact reproducibility in the `./devcontainer/` environment. 
+
+GPSNorm is designed to be applied to the standard excel files outputed by the Nanostring GeoMx Digital Spacial Profiler. 
+
+```{r}
+#| label: Load data. 
+
+path <- system.file(
+    "extdata",
+    "example_geomx_GSE186213.xlsx", package = "GPSNorm"
+)
+
+# Load and format data. 
+data_covid <- GPSNorm::load_geomx_for_inla(
+    path, 
+    seg_covariates = c( 
+        "AOISurfaceArea", 
+        "AOINucleiCount",
+        "DeduplicatedReads",
+        "SequencingSaturation", 
+        "AlignedReads", 
+        "Mix"
+    )
+)
+
+data_covid_spe <- GPSNorm::geomx_long_to_spe(
+    data_covid, group_col = "Mix",
+    extra_coldata = c(
+        "AOISurfaceArea",
+        "AOINucleiCount",
+        "DeduplicatedReads",
+        "SequencingSaturation", 
+        "Slide_ID"
+    )
+)
+```
+
+After covert the data to a `SpatialExperiment` object the normalization can be computed. 
+
+```{r}
+#| label: Apply normalization. 
+
+set.seed(1)
+
+covid_fit <- GPSNorm::normalize_spe_inla_pac(
+    data_covid_spe, 
+    model_fun = GPSNorm::fit_inla_baseline_model,
+    model_args = list(
+        verbose = TRUE
+    ), 
+    group_col = "Mix_bin"
+)
+```
+
+A volcano plot to analyze the estimated differential expression can be created from the the fit object by calling:   
+
+```{r}
+#| label: DE volcano plot
+
+covid_fit_bayes <- GPSNorm::de_volcano_bayes(
+    covid_fit$spe, 
+    covid_fit$fit$fit
+)
+
+covid_fit_bayes$plot 
+```
+
+The posterior of a single gene can be examined by calling: 
+
+```{r}
+#| label: DE posterior for SCGB1A1
+
+de_posterior <- plot_de_posterior(
+    covid_fit, 
+    gene = "1524", 
+    gene_name_col = "Gene_ID"
+)
+
+de_posterior$plot
 ```
