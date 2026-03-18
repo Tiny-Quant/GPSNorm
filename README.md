@@ -67,8 +67,6 @@ reproducibility is important.
 
 ## Example
 
-This is a basic example which shows you how to solve a common problem:
-
 ``` r
 # devtools::load_all(".") # uncomment if opened in container.
 library(GPSNorm)
@@ -138,13 +136,7 @@ de_posterior <- plot_de_posterior(
     gene_name_col = "Gene_ID"
 )
 
-de_posterior
-#> $plot
+de_posterior$plot
 ```
 
 <img src="man/figures/README-unnamed-chunk-3-1.png" width="100%" />
-
-    #> 
-    #> $summary
-    #>   gene scale       mean      q_low      q_med     q_high p_gt0 p_lt0 rope_prob
-    #> 1 1524 logFC -0.5241118 -0.6880245 -0.5162815 -0.3826269     0     1        NA

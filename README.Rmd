@@ -76,8 +76,6 @@ reproducibility is important.
 
 ## Example
 
-This is a basic example which shows you how to solve a common problem:
-
 ```{r example}
 # devtools::load_all(".") # uncomment if opened in container.
 library(GPSNorm)
