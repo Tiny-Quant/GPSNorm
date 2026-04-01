@@ -491,6 +491,19 @@ prep_inla_long_df <- function(
 
 #' Normalize a SpatialExperiment using an INLA + PAC model
 #'
+#' @param spe A `SpatialExperiment`.
+#' @param model_fun Modeling function (e.g. `fit_inla_baseline_model`) that
+#'   accepts a prep list and returns fitted components used for normalization.
+#' @param group_col Column in `colData(spe)` used as binary contrast.
+#' @param counts_assay Assay name containing raw counts.
+#' @param tech_covariates Optional AOI-level technical covariates to include.
+#' @param center_scale_covariates Logical; whether to center/scale selected
+#'   technical covariates.
+#' @param subsample_frac Optional fraction of AOIs to retain in fitting table.
+#' @param model_args Named list forwarded to `model_fun`.
+#' @param cluster_aoi Logical; if `TRUE`, fit on AOI clusters then project back.
+#' @param cluster_args Named list forwarded to [make_aoi_clusters()].
+#'
 #' @return List with SpatialExperiment (`spe`) and fitted model (`fit`)
 #' @export
 normalize_spe_inla_pac <- function(
@@ -772,6 +785,13 @@ normalize_spe_inla_pac <- function(
 
 #' Baseline INLA normalization model: gene baseline + spatial AOI
 #'
+#' @param prep Output list from [prep_inla_long_df()].
+#' @param k Number of within-slide nearest neighbors for AOI graph.
+#' @param symmetric Logical; whether to symmetrize kNN adjacency.
+#' @param family INLA likelihood family.
+#' @param verbose Logical passed to `INLA::inla`.
+#'
+#' @return List containing `fit`, `eta_full`, `size`, and latent components.
 #' @export
 fit_inla_baseline_model <- function(
     prep,
@@ -870,7 +890,17 @@ fit_inla_baseline_model <- function(
 }
 
 
+#' INLA model with PC prior for DE random effects
 #'
+#' @param prep Output list from [prep_inla_long_df()].
+#' @param k Number of within-slide nearest neighbors for AOI graph.
+#' @param symmetric Logical; whether to symmetrize kNN adjacency.
+#' @param family INLA likelihood family.
+#' @param de_U PC prior upper-scale parameter for DE effect SD.
+#' @param de_alpha PC prior tail probability at `de_U`.
+#' @param verbose Logical passed to `INLA::inla`.
+#'
+#' @return List containing `fit`, `eta_full`, `size`, and latent components.
 #' @export
 fit_inla_tuned_pc <- function(
     prep,
@@ -979,8 +1009,18 @@ fit_inla_tuned_pc <- function(
 }
 
 
+#' INLA model with log-gamma prior for DE random effects
 #'
-#' @export 
+#' @param prep Output list from [prep_inla_long_df()].
+#' @param k Number of within-slide nearest neighbors for AOI graph.
+#' @param symmetric Logical; whether to symmetrize kNN adjacency.
+#' @param family INLA likelihood family.
+#' @param de_lgamma Length-2 numeric prior parameters for log-gamma precision
+#'   prior.
+#' @param verbose Logical passed to `INLA::inla`.
+#'
+#' @return List containing `fit`, `eta_full`, `size`, and latent components.
+#' @export
 fit_inla_heavy_tail <- function(
     prep,
     k = 4, 
@@ -1086,7 +1126,18 @@ fit_inla_heavy_tail <- function(
 }
 
 
+#' INLA model with expression-bin-specific DE random effects
 #'
+#' @param prep Output list from [prep_inla_long_df()].
+#' @param k Number of within-slide nearest neighbors for AOI graph.
+#' @param symmetric Logical; whether to symmetrize kNN adjacency.
+#' @param family INLA likelihood family.
+#' @param n_de_bins Number of equal-frequency gene-expression bins.
+#' @param de_U PC prior upper-scale parameter for DE effect SD.
+#' @param de_alpha PC prior tail probability at `de_U`.
+#' @param verbose Logical passed to `INLA::inla`.
+#'
+#' @return List containing `fit`, `eta_full`, `size`, and latent components.
 #' @export
 fit_inla_bin <- function(
     prep,
@@ -1256,6 +1307,15 @@ fit_inla_bin <- function(
 #' Heavy-tailed approximation:
 #'   beta_de = beta_small + beta_large
 #'
+#' @param prep Output list from [prep_inla_long_df()].
+#' @param k Number of within-slide nearest neighbors for AOI graph.
+#' @param symmetric Logical; whether to symmetrize kNN adjacency.
+#' @param family INLA likelihood family.
+#' @param verbose Logical passed to `INLA::inla`.
+#' @param small_U,small_alpha PC prior parameters for small DE component.
+#' @param large_U,large_alpha PC prior parameters for large DE component.
+#'
+#' @return List containing `fit`, `eta_full`, `size`, and latent components.
 #' @export
 fit_inla_mix <- function(
     prep,

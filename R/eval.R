@@ -1,4 +1,25 @@
+#' Evaluate limma DE performance against simulation truth
 #'
+#' Fits a limma model using a binary group indicator and compares recovered
+#' differential-expression statistics against truth columns in `rowData(spe)`.
+#' Metrics include effect recovery, ranking quality, threshold-based recall, and
+#' top-k precision/recall.
+#'
+#' @param spe A `SpatialExperiment` containing a normalized assay and truth
+#'   annotations in `rowData(spe)`.
+#' @param norm_assay Character scalar. Assay name used as limma input.
+#' @param group_col Character scalar. Column in `colData(spe)` containing
+#'   binary group labels (`0/1`).
+#' @param fdr_level Numeric scalar. FDR cutoff for computing `tpr_at_fdr`.
+#' @param top_k Optional integer. Number of top-ranked genes used for
+#'   precision/recall; defaults to max(10, 5% of evaluated genes).
+#' @param return_table Logical. If `TRUE`, include a per-gene table in the
+#'   output.
+#'
+#' @return A named list containing DE performance metrics and diagnostics:
+#' `mse`, `bias`, `spearman_r`, `coverage`, `width`, `auc`,
+#' `average_precision`, `tpr_at_fdr`, `precision_k`, `recall_k`,
+#' `diagnostics`, and optional `de_table`.
 #' @export
 evaluate_de_performance_limma <- function(
     spe,
@@ -227,8 +248,28 @@ evaluate_de_performance_limma <- function(
     )
 }
 
+#' Evaluate Bayesian DE performance against simulation truth
 #'
-#' @export 
+#' Uses posterior summaries from INLA gene-level DE random effects to score
+#' genes and compare against truth columns in `rowData(spe)`. Supports both
+#' single-effect and mixture-effect INLA outputs.
+#'
+#' @param spe A `SpatialExperiment` with truth annotations in `rowData(spe)`.
+#' @param fit_inla Fitted INLA object containing DE random-effect summaries in
+#'   `summary.random`.
+#' @param gene_id_col Character scalar. Column in `rowData(spe)` mapping genes
+#'   to INLA random-effect IDs.
+#' @param gene_type_col Character scalar. Column in `rowData(spe)` used to
+#'   subset evaluated genes (typically `"gene_type"` with `"REG"` genes).
+#' @param fdr_level Numeric scalar. FDR cutoff for computing `tpr_at_fdr`.
+#' @param top_k Optional integer. Number of top-ranked genes used for
+#'   precision/recall; defaults to max(10, 5% of evaluated genes).
+#' @param return_table Logical. If `TRUE`, include a per-gene table in the
+#'   output.
+#'
+#' @return A named list containing DE performance metrics and diagnostics,
+#' analogous to [evaluate_de_performance_limma()].
+#' @export
 evaluate_de_performance_bayes <- function(
     spe,
     fit_inla,
@@ -509,6 +550,22 @@ evaluate_de_performance_bayes <- function(
     )
 }
 
+#' Compute dual-marker concordance/enrichment metrics
+#'
+#' Utility evaluator for marker panels with expected opposite-direction effects
+#' (positive and negative marker sets).
+#'
+#' @param results_df Data frame of gene-level DE results.
+#' @param positive_markers Character vector of expected up-regulated markers.
+#' @param negative_markers Character vector of expected down-regulated markers.
+#' @param method_name Method label stored in output.
+#' @param effect_col Optional effect-size column (auto-detected if `NULL`).
+#' @param prob_col Optional evidence/probability column (auto-detected if
+#'   `NULL`).
+#' @param top_k Integer top-k cutoff used for marker-recovery summaries.
+#'
+#' @return One-row data frame of marker performance metrics.
+#' @keywords internal
 compute_dual_marker_performance <- function(
     results_df,
     positive_markers,
@@ -1044,6 +1101,12 @@ evaluate_domain_preservation <- function(
 # Helper Functions 
 # Note: Taken from SpaNorm\SpaNorm_files\SpaNorm_files\codes\spatial_clustering_wrappers.R
 #----intermmediate analyses----
+#' Add PCA embedding used by graph-based clustering wrappers
+#'
+#' @param spe A `SpatialExperiment`.
+#'
+#' @return `spe` with PCA dimension reduction.
+#' @keywords internal
 addPCA <- function(spe) {
   stopifnot(is(spe, 'SpatialExperiment'))
 
@@ -1053,6 +1116,13 @@ addPCA <- function(spe) {
   return(spe)
 }
 
+#' Build an SNN graph from PCA embeddings
+#'
+#' @param spe A `SpatialExperiment` with PCA embeddings.
+#' @param snn Integer neighborhood size for SNN graph construction.
+#'
+#' @return An `igraph` object with truth labels on vertices.
+#' @keywords internal
 computeSNN <- function(spe, snn = 10) {
   g = suppressWarnings(scran::buildSNNGraph(spe, k = snn, use.dimred = 'PCA'))
   igraph::V(g)$Truth = as.character(spe$AnnotatedCluster)
@@ -1061,6 +1131,14 @@ computeSNN <- function(spe, snn = 10) {
 }
 
 #----cluster----
+#' Cluster an igraph object using a selected algorithm
+#'
+#' @param g `igraph` graph.
+#' @param alg Clustering function (default walktrap).
+#' @param ... Additional arguments forwarded to `alg`.
+#'
+#' @return List with factors `Truth` and `Predicted`.
+#' @keywords internal
 cluster_graph <- function(g, alg = igraph::cluster_walktrap, ...) {
   stopifnot(is(g, 'igraph'))
 
@@ -1074,6 +1152,13 @@ cluster_graph <- function(g, alg = igraph::cluster_walktrap, ...) {
   return(cl)
 }
 
+#' Cluster spots with BayesSpace and return label pairs
+#'
+#' @param spe A `SpatialExperiment`.
+#' @param q Multiplicative factor for expected number of clusters.
+#'
+#' @return List with factors `Truth` and `Predicted`.
+#' @keywords internal
 cluster_BayesSpace <- function(spe, q = 1) {
   # expected clusters
   ncl = getNClusters(spe)
@@ -1098,11 +1183,15 @@ cluster_BayesSpace <- function(spe, q = 1) {
 }
 
 
-#' 
-#' Error in py_call_impl(callable, call_args$unnamed, call_args$named) : 
-#' AttributeError: 'csc_matrix' object has no attribute 'A'
-#' Run `reticulate::py_last_error()` for details.
-#' Calls: lapply ... run_one -> cluster_SpaGCN -> <Anonymous> -> py_call_impl
+#' Cluster spots with SpaGCN and return label pairs
+#'
+#' @param spe A `SpatialExperiment`.
+#' @param q Multiplicative factor for expected number of clusters.
+#' @param res_init Initial SpaGCN resolution.
+#' @param res_step Step size for resolution search.
+#'
+#' @return List with factors `Truth` and `Predicted`.
+#' @keywords internal
 cluster_SpaGCN <- function(spe, q = 1, res_init = 0.7, res_step = 0.1) {
   # expected clusters
   ncl = getNClusters(spe)
@@ -1196,10 +1285,22 @@ cluster_SpaGCN <- function(spe, q = 1, res_init = 0.7, res_step = 0.1) {
 }
 
 #----performance metrics----
+#' Compute adjusted Rand index from truth/predicted labels
+#'
+#' @param x List with elements `Truth` and `Predicted`.
+#'
+#' @return Numeric ARI value.
+#' @keywords internal
 rand_index <- function(x) {
   mclust::adjustedRandIndex(x$Predicted, x$Truth)
 }
 
+#' Partition expression variance by annotated cluster
+#'
+#' @param spe A `SpatialExperiment` with `AnnotatedCluster`.
+#'
+#' @return Two-column matrix with between/within sum-of-squares fractions.
+#' @keywords internal
 variance_analysis <- function(spe) {
   # filter very lowly expressed genes
   spe = spe[rowSums(logcounts(spe) != 0) > 5, ]
@@ -1213,6 +1314,13 @@ variance_analysis <- function(spe) {
   return(df)
 }
 
+#' Infer number of clusters from available domain labels
+#'
+#' @param spe A `SpatialExperiment`.
+#' @param domain_col Preferred domain column in `colData(spe)`.
+#'
+#' @return Integer number of unique clusters.
+#' @keywords internal
 getNClusters <- function(spe, domain_col = "sim_domain") {
   cd <- SummarizedExperiment::colData(spe)
 
@@ -1226,7 +1334,30 @@ getNClusters <- function(spe, domain_col = "sim_domain") {
   stop("No domain labels found to infer cluster count.", call. = FALSE)
 }
 
-#' 
+#' Evaluate SVG detection performance across methods
+#'
+#' Runs one or more spatial-variable-gene (SVG) methods on a
+#' `SpatialExperiment`, then compares method-specific rankings/calls against a
+#' truth indicator in `rowData(spe)`.
+#'
+#' @param spe A `SpatialExperiment`.
+#' @param norm_assay Character scalar. Assay used by methods that require
+#'   normalized expression values.
+#' @param truth_col Character scalar. Column in `rowData(spe)` containing SVG
+#'   truth labels (`0/1`).
+#' @param k_frac Numeric scalar in `(0,1]`. Fraction of genes used for top-k
+#'   recall metrics.
+#' @param compute_iso_mse Logical. If `TRUE`, computes isotonic-calibration MSE
+#'   where applicable.
+#' @param methods Character vector of method names to run. Supported defaults
+#'   are `"SPARKX"`, `"nnSVG"`, `"Seurat_Moran"`, and `"MERINGUE"`.
+#' @param n_cores Integer number of cores for parallelizable method backends.
+#' @param verbose Logical. If `TRUE`, print per-method progress messages.
+#' @param strict Logical. If `TRUE`, stop on method failures; otherwise continue
+#'   and return available results.
+#'
+#' @return A list with per-method performance summaries and any method-level
+#'   diagnostics produced internally.
 #' @export
 evaluate_svg_performance <- function(
   spe,
@@ -1408,6 +1539,13 @@ evaluate_svg_performance <- function(
   )
 
 }
+#' Standardize SVG method scores into a common table
+#'
+#' @param score Numeric score vector.
+#' @param gene_ids Gene identifiers aligned with `score`.
+#'
+#' @return Data frame with `gene_id` and numeric `score`.
+#' @keywords internal
 .standardize_svg_output <- function(score, gene_ids) {
   stopifnot(length(score) == length(gene_ids))
   data.frame(
@@ -1418,6 +1556,16 @@ evaluate_svg_performance <- function(
 }
 
 # From: SpaNorm\SpaNorm_files\SpaNorm_files\codes\SVG\SVG_wrappers.R
+#' Create a Giotto object from counts and spatial metadata
+#'
+#' @param countMat Count matrix.
+#' @param spatial_locs Spot coordinate matrix/data frame.
+#' @param cell_metadata Spot-level metadata.
+#' @param filter Logical; whether to run Giotto filtering.
+#' @param normalize Logical; whether to run Giotto normalization.
+#'
+#' @return A Giotto object.
+#' @keywords internal
 createGobject <- function(countMat, 
                           spatial_locs, 
                           cell_metadata, 
@@ -1454,6 +1602,16 @@ createGobject <- function(countMat,
   return(giotto)
 }
 
+#' Create a SpatialExperiment object from matrix + coordinates
+#'
+#' @param countMat Count matrix.
+#' @param spatial_locs Spot coordinates.
+#' @param cell_metadata Spot-level metadata.
+#' @param normalize Logical; whether to compute library-size normalization and
+#'   logcounts.
+#'
+#' @return A `SpatialExperiment`.
+#' @keywords internal
 createSPEObject <- function(countMat, 
                             spatial_locs, 
                             cell_metadata,
@@ -1484,6 +1642,13 @@ createSPEObject <- function(countMat,
   return(data_spe)
 }
 
+#' Create a Seurat object from counts
+#'
+#' @param countMat Count matrix.
+#' @param normalize Logical; whether to run SCTransform.
+#'
+#' @return A Seurat object.
+#' @keywords internal
 createSeuObject <- function(countMat, normalize=TRUE) {
 
   require(Seurat)
@@ -1499,6 +1664,15 @@ createSeuObject <- function(countMat, normalize=TRUE) {
 }
 
 
+#' Run Seurat SVG detection
+#'
+#' @param logMat Seurat object (despite name) containing expression/spatial
+#'   data.
+#' @param method SVG method; currently `"moransi"`.
+#' @param spatial.loc Spatial coordinates passed to Seurat.
+#'
+#' @return Data frame of spatially variable feature statistics.
+#' @keywords internal
 callSVG.Seurat <- function(logMat, method = "moransi", spatial.loc=spatial.loc) {
   
   require(Seurat)
@@ -1513,6 +1687,14 @@ callSVG.Seurat <- function(logMat, method = "moransi", spatial.loc=spatial.loc) 
   }
 }
 
+#' Run MERINGUE spatial-pattern scoring
+#'
+#' @param normMat Normalized expression matrix (`genes x spots`).
+#' @param spatial_locs Spot coordinates.
+#' @param verbose Logical for progress messages.
+#'
+#' @return Method-specific statistic object from `MERINGUE::getSpatialPatterns`.
+#' @keywords internal
 callSVG.MERINGUE <- function(normMat, spatial_locs, verbose = FALSE) {
   require(MERINGUE)
   require(spdep)
@@ -1547,6 +1729,14 @@ callSVG.MERINGUE <- function(normMat, spatial_locs, verbose = FALSE) {
   I
 }
 
+#' Harmonize spot IDs between assays and coordinates
+#'
+#' @param spe A `SpatialExperiment`.
+#' @param norm_assay Assay used to extract expression matrix.
+#'
+#' @return List with matrix `mat` and coordinate matrix `coords` sharing spot
+#'   IDs.
+#' @keywords internal
 .standardize_spot_ids <- function(spe, norm_assay = "logcounts") {
 
   mat <- SummarizedExperiment::assay(spe, norm_assay)
@@ -1568,6 +1758,16 @@ callSVG.MERINGUE <- function(normMat, spatial_locs, verbose = FALSE) {
   )
 }
 
+#' Run Giotto SVG detection wrapper
+#'
+#' @param gobject Giotto object.
+#' @param svg_method SVG ranking strategy.
+#' @param runHVG Logical; whether to compute HVGs first.
+#' @param runPCA Logical; whether to compute PCA first.
+#' @param n_cores Integer number of cores.
+#'
+#' @return Giotto result table/object from `binSpect`.
+#' @keywords internal
 callSVG.Giotto <- function(gobject,
                            svg_method = c("kmeans", "rank"),
                            runHVG = FALSE,
@@ -1593,6 +1793,13 @@ callSVG.Giotto <- function(gobject,
   
 }
 
+#' Run SPARK-X SVG detection wrapper
+#'
+#' @param spe A `SpatialExperiment`.
+#' @param n_cores Integer number of cores.
+#'
+#' @return Data frame of SPARK-X multiple-testing results.
+#' @keywords internal
 callSVG.SPARKX <- function(spe,
                           n_cores = 1L) {
   
@@ -1626,6 +1833,16 @@ callSVG.SPARKX <- function(spe,
 #   }
   
 # }
+#' Run nnSVG and return standardized score table
+#'
+#' @param spe A `SpatialExperiment`.
+#' @param gene_ids Unused placeholder argument kept for compatibility.
+#' @param seed RNG seed.
+#' @param n_threads Requested threads (currently passed through defaults).
+#' @param k Unused placeholder argument for compatibility.
+#'
+#' @return Data frame with `gene_id` and `nnsvg_score`.
+#' @keywords internal
 callSVG.nnSVG <- function(spe, gene_ids, seed = 1, n_threads = 1L, k = 10) {
 
     require(nnSVG)

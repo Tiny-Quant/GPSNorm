@@ -75,8 +75,12 @@ apply_q3_logcounts <- function(
 
 
 # Below taken from SpaNorm\SpaNorm_files\SpaNorm_files\codes\spatial_clustering_wrappers.R
+#' Normalize with scran deconvolution size factors
 #'
-#' @export 
+#' @param spe A `SpatialExperiment`/`SingleCellExperiment` with `counts`.
+#'
+#' @return Object with `logcounts` added/updated using scran normalization.
+#' @export
 normalise_scran <- function(spe) {
   cl = scran::quickCluster(spe)
   spe = scran::computeSumFactors(spe, clusters = cl)
@@ -87,8 +91,12 @@ normalise_scran <- function(spe) {
 }
 
 
+#' Normalize with SCTransform (`sctransform::vst`)
 #'
-#' @export 
+#' @param spe A `SpatialExperiment`/`SingleCellExperiment` with `counts`.
+#'
+#' @return Object subset to modeled genes with `logcounts` set to SCT output.
+#' @export
 normalise_sct <- function(spe) {
   vst_res = sctransform::vst(SingleCellExperiment::counts(spe, vst.flavor = 'v2'),
                              verbosity = 0)
@@ -100,8 +108,14 @@ normalise_sct <- function(spe) {
 }
 
 
+#' Normalize with RUV-III-NB using NEG controls
 #'
-#' @export 
+#' @param spe A `SpatialExperiment` containing `rowData(spe)$gene_type` with
+#'   `"NEG"` controls.
+#' @param K Integer number of unwanted factors for RUV-III.
+#'
+#' @return Object with RUV-adjusted values written to `logcounts`.
+#' @export
 normalise_ruv3nb <- function(spe, K = 1) {
 
   if (!requireNamespace("ruvIIInb", quietly = TRUE)) {
@@ -165,7 +179,11 @@ normalise_ruv3nb <- function(spe, K = 1) {
 }
 
 
+#' Normalize using Giotto standard normalization
 #'
+#' @param spe A `SpatialExperiment` with counts and spatial coordinates.
+#'
+#' @return `spe` with `logcounts` populated from Giotto normalized expression.
 #' @export
 normalise_Giotto <- function(spe) {
     library(Giotto)
@@ -190,6 +208,11 @@ normalise_Giotto <- function(spe) {
 }
 
 
+#' Normalize by library-size scaling then log-transform
+#'
+#' @param spe A `SpatialExperiment`/`SingleCellExperiment` containing `counts`.
+#'
+#' @return Object with scaled `logcounts` assay.
 #' @export
 normalise_ls <- function(spe) {
 
