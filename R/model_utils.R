@@ -1,3 +1,13 @@
+#' Broadcast scalar/vector argument to match expected length
+#'
+#' Internal helper used to normalize argument lengths before model assembly.
+#'
+#' @param x Vector or scalar value.
+#' @param n Integer target length.
+#' @param name Character scalar used in validation error messages.
+#'
+#' @return A vector of length `n`.
+#' @keywords internal
 .broadcast_param <- function(x, n, name) {
     if (length(x) == 1L) {
         rep(x, n)
@@ -14,6 +24,18 @@
     }
 }
 
+#' Safely extract INLA random-effect posterior means by index
+#'
+#' Looks up `mean` values in a named random-effect component and matches them to
+#' `idx_vec` using the component `ID` column. Missing components or malformed
+#' structures yield `NA_real_` values.
+#'
+#' @param re_list List, typically `fit$summary.random`.
+#' @param name Character random-effect name in `re_list`.
+#' @param idx_vec Vector of IDs to match.
+#'
+#' @return Numeric vector aligned with `idx_vec`.
+#' @keywords internal
 .safe_pull_re_mean <- function(re_list, name, idx_vec) {
     if (!is.list(re_list) || is.null(re_list[[name]])) {
         return(rep(NA_real_, length(idx_vec)))

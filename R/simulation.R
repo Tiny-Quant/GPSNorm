@@ -132,6 +132,20 @@ canonicalize_spe_inputs <- function(
     list(spe = spe, meta = meta)
 } 
 # Helper functions. 
+#' Ensure gene-type annotations (NEG/HK/REG) are available
+#'
+#' Internal helper that either harmonizes an existing gene-type column or
+#' derives control-gene labels from expression statistics.
+#'
+#' @param spe A `SpatialExperiment`.
+#' @param mat Count matrix (`genes x AOIs`) used for deriving gene types when
+#'   `gene_type_col` is absent.
+#' @param gene_type_col Optional existing gene-type column in `rowData(spe)`.
+#' @param prop_neg Target fraction for negative-control genes when deriving.
+#' @param prop_hk Target fraction for housekeeping genes when deriving.
+#'
+#' @return Updated `SpatialExperiment` with `rowData(spe)$gene_type`.
+#' @keywords internal
 .ensure_gene_types <- function(
     spe, mat, gene_type_col, prop_neg, prop_hk 
 ) {
@@ -210,6 +224,12 @@ canonicalize_spe_inputs <- function(
 
 #   rowMeans((x - m)^2)
 # }
+#' Compute row-wise variance for sparse matrices
+#'
+#' @param mat A `Matrix` object with genes in rows.
+#'
+#' @return Numeric vector of unbiased row variances.
+#' @keywords internal
 .row_var_sparse <- function(mat) {
   # mat: dgCMatrix (genes x AOIs)
   stopifnot(inherits(mat, "Matrix"))
@@ -224,6 +244,14 @@ canonicalize_spe_inputs <- function(
 
   (rs2 - (rs1^2) / n) / (n - 1)
 }
+#' Ensure a binary simulation group label exists
+#'
+#' @param spe A `SpatialExperiment`.
+#' @param group_col Optional source column in `colData(spe)` to coerce to binary
+#'   `sim_group`.
+#'
+#' @return Updated `SpatialExperiment` with `colData(spe)$sim_group`.
+#' @keywords internal
 .ensure_group_label <- function(
     spe, group_col
 ) {
@@ -249,6 +277,19 @@ canonicalize_spe_inputs <- function(
     SummarizedExperiment::colData(spe) <- cd
     spe
 }
+#' Ensure spatial-domain labels exist
+#'
+#' Uses an existing domain column when provided; otherwise assigns
+#' `sim_domain` via k-means on standardized spatial coordinates.
+#'
+#' @param spe A `SpatialExperiment`.
+#' @param coords Numeric coordinate matrix.
+#' @param domain_col Optional source domain column in `colData(spe)`.
+#' @param k_domains Integer number of simulated domains when `domain_col` is
+#'   absent.
+#'
+#' @return Updated `SpatialExperiment` with `colData(spe)$sim_domain`.
+#' @keywords internal
 .ensure_domain_label <- function(
     spe, coords, domain_col, k_domains
 ) {
@@ -284,8 +325,55 @@ canonicalize_spe_inputs <- function(
     spe
 }
 
-#' 
-#' @export 
+#' Simulate benchmark-ready spatial transcriptomics counts
+#'
+#' Generates DE/domain/SVG signal layers and technical effects on top of an
+#' input `SpatialExperiment`, returning an updated object plus truth metadata
+#' for downstream normalization and evaluation workflows.
+#'
+#' @param spe Input `SpatialExperiment`.
+#' @param n_slide Integer number of slides to simulate.
+#' @param counts_assay Assay name containing raw counts.
+#' @param gene_type_col Optional gene-type column to map into NEG/HK/REG.
+#' @param group_col Optional source group column.
+#' @param domain_col Optional source domain column.
+#' @param prop_neg,prop_hk Control-gene fractions used when gene types are
+#'   inferred.
+#' @param k_domains Number of domains used when domain labels are simulated.
+#' @param de_prop Fraction of genes assigned true DE effects.
+#' @param de_logfc_log_mean Mean log-scale magnitude for DE effects.
+#' @param dom_prop Fraction of genes with domain effects.
+#' @param dom_sd SD for domain effects.
+#' @param svg_prop Fraction of genes with SVG effects.
+#' @param svg_sd SD for SVG effects.
+#' @param de_svg_overlap Target overlap fraction between DE and SVG gene sets.
+#' @param de_dom_overlap Target overlap fraction between DE and domain gene
+#'   sets.
+#' @param tech_spatial_sd SD of spatial technical effect.
+#' @param tech_rbf_knots Number of RBF knots for technical field simulation.
+#' @param tech_rbf_scale RBF kernel scale.
+#' @param slide_rho Across-slide effect correlation.
+#' @param slide_lib_sd Slide-level library-size log SD.
+#' @param slide_group_probs Optional per-slide group probabilities.
+#' @param zi_prob Zero-inflation probability.
+#' @param spot_prop,gene_prop Optional retained proportions for spot/gene
+#'   subsampling.
+#' @param n_spot_sub,n_gene_sub Optional fixed retained counts for spot/gene
+#'   subsampling.
+#' @param bg_prop Fraction of genes with multiplicative background inflation.
+#' @param bg_only_controls Logical; if `TRUE`, background inflation is
+#'   restricted to NEG/HK genes.
+#' @param group_confounded Logical; if `TRUE`, induces domain-group confounding.
+#' @param group_conf_rho Confounding strength.
+#' @param group_conf_mode Confounding mode (`"logit"` or `"hard"`).
+#' @param group_conf_center_by_slide Logical, whether to center confounding
+#'   signal within each slide.
+#' @param group_conf_target_p Target group prevalence under confounding.
+#' @param seed RNG seed.
+#'
+#' @return List with `spe` (simulated object), `truth_gene`, `truth_spot`,
+#'   `gamma_gd`, `svg_term`, and `svg_map`.
+#' @export
 simulate_spe_benchmark <- function(
     spe,
     n_slide = 3L,
@@ -910,12 +998,24 @@ simulate_spe_benchmark <- function(
     )
 }
 # Helper functions.
+#' Coerce coordinate-like input to a 2-column numeric matrix
+#'
+#' @param x Matrix/data.frame-like object with at least two columns.
+#'
+#' @return Two-column numeric matrix.
+#' @keywords internal
 .as_numeric_matrix <- function(x) {
     x <- as.matrix(x)
     x[, 1] <- as.numeric(x[, 1])
     x[, 2] <- as.numeric(x[, 2])
     x
 }
+#' Estimate per-gene NB size from sparse counts
+#'
+#' @param mat Count matrix (preferably `dgCMatrix`) with genes in rows.
+#'
+#' @return Numeric vector of negative-binomial size estimates.
+#' @keywords internal
 .nb_size_from_sparse <- function(mat) {
     # Estimates per-gene NB "size" using Var(Y)=mu + mu^2/size.
     if (!inherits(mat, "dgCMatrix")) {
@@ -933,6 +1033,13 @@ simulate_spe_benchmark <- function(
     size <- (mu^2) / pmax(v - mu, 1e-6)
     as.numeric(size)
 }
+#' Sample a proportionate subset of integer IDs
+#'
+#' @param ids Integer-like vector of IDs.
+#' @param prop Proportion to sample.
+#'
+#' @return Integer vector of sampled IDs.
+#' @keywords internal
 .sample_subset <- function(ids, prop) {
     ids <- as.integer(ids)
     if (length(ids) == 0L) return(integer(0))
@@ -940,6 +1047,12 @@ simulate_spe_benchmark <- function(
     n <- max(1L, as.integer(round(length(ids) * prop)))
     sample(ids, size = min(n, length(ids)), replace = FALSE)
 }
+#' Draw random coordinate-transform parameters
+#'
+#' @param seed RNG seed.
+#'
+#' @return List with rotation, reflection, and translation parameters.
+#' @keywords internal
 .coord_transform_params <- function(seed) {
     set.seed(seed)
     list(
@@ -949,6 +1062,13 @@ simulate_spe_benchmark <- function(
         shift = stats::rnorm(2, mean = 0, sd = 0.25)
     )
 }
+#' Apply affine-like transform to coordinates
+#'
+#' @param xy Coordinate matrix.
+#' @param tr Transform parameter list from [.coord_transform_params()].
+#'
+#' @return Transformed coordinate matrix.
+#' @keywords internal
 .apply_coord_transform <- function(xy, tr) {
     xy <- .as_numeric_matrix(xy)
     c0 <- colMeans(xy)
@@ -966,6 +1086,15 @@ simulate_spe_benchmark <- function(
     z <- sweep(z, 2, tr$shift, "+")
     z
 }
+#' Build radial basis function design matrix on coordinates
+#'
+#' @param xy Coordinate matrix.
+#' @param m Number of knots.
+#' @param scale Kernel scale parameter.
+#' @param seed RNG seed for knot sampling.
+#'
+#' @return Numeric matrix of RBF basis values.
+#' @keywords internal
 .rbf_basis <- function(xy, m = 12L, scale = 0.2, seed = 1) {
     #xy <- .as_numeric_matrix(xy)
     xy <- .scale_coords01(xy)
@@ -992,12 +1121,26 @@ simulate_spe_benchmark <- function(
     B <- exp(-d2 / (2 * scale * scale))
     B
 }
+#' Z-score a numeric vector with zero-variance guard
+#'
+#' @param x Numeric vector.
+#'
+#' @return Standardized numeric vector.
+#' @keywords internal
 .zscore <- function(x) {
     x <- as.numeric(x)
     s <- stats::sd(x)
     if (!is.finite(s) || s <= 0) return(rep(0, length(x)))
     (x - mean(x)) / s
 }
+#' Winsorize on log scale and map back to original scale
+#'
+#' @param x Numeric vector.
+#' @param p_lo Lower quantile.
+#' @param p_hi Upper quantile.
+#'
+#' @return Winsorized numeric vector on original scale.
+#' @keywords internal
 .winsorize_log <- function(x, p_lo = 0.001, p_hi = 0.999) {
     lx <- log(pmax(as.numeric(x), 1e-12))
     qs <- stats::quantile(
@@ -1005,6 +1148,12 @@ simulate_spe_benchmark <- function(
     )
     exp(pmin(pmax(lx, qs[1]), qs[2]))
 }
+#' Rescale x/y coordinates to the unit square
+#'
+#' @param xy Coordinate matrix.
+#'
+#' @return Rescaled coordinate matrix in `[0, 1]` for each axis.
+#' @keywords internal
 .scale_coords01 <- function(xy) {
     xy <- .as_numeric_matrix(xy)
 

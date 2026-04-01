@@ -68,7 +68,35 @@ domain_na_as_level <- function(
   spe
 }
 
+#' Volcano plot for Bayesian DE posterior summaries
 #'
+#' Builds a volcano-style plot using posterior means and standard deviations
+#' from `fit_inla$summary.random$Gene_ID_de`. Evidence is expressed as
+#' \eqn{P(|\beta| > \delta)} under a normal approximation to each gene-level
+#' posterior.
+#'
+#' @param spe A `SpatialExperiment` with gene-level metadata in `rowData(spe)`.
+#' @param fit_inla Fitted INLA object containing `summary.random$Gene_ID_de`
+#'   with columns `ID`, `mean`, and `sd`.
+#' @param gene_id_col Character scalar. Column in `rowData(spe)` used to map
+#'   genes to INLA random-effect IDs. Defaults to `"Gene_ID"`.
+#' @param gene_type_col Character scalar. Column in `rowData(spe)` used to
+#'   subset to regular/endogenous genes (`"REG"`). Defaults to `"gene_type"`.
+#' @param delta Numeric scalar. ROPE half-width for practical effect size.
+#'   Defaults to `0.1`.
+#' @param label_top Integer. Number of top high-evidence genes to label.
+#' @param prob_cut Numeric scalar in `(0, 1)`. Posterior probability threshold
+#'   used to flag high-evidence genes.
+#' @param title Character scalar. Plot title.
+#' @param subtitle Optional character scalar subtitle. If `NULL`, a default
+#'   subtitle is generated from `delta` and `prob_cut`.
+#'
+#' @return A list with:
+#' \describe{
+#'   \item{`df`}{Tibble used for plotting (REG genes only) with posterior
+#'   summaries and evidence scores.}
+#'   \item{`plot`}{A `ggplot2` object.}
+#' }
 #' @export
 de_volcano_bayes <- function(
     spe,
